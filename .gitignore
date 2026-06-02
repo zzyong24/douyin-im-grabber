@@ -1,0 +1,22 @@
+# 抓取内容（绝不上传）
+groups/
+data/
+
+# 运行时
+__pycache__/
+*.pyc
+*.pyo
+.DS_Store
+
+# 配置和密钥
+.env
+*.env
+
+# 日志
+*.log
+
+# Python 打包
+build/
+dist/
+*.egg-info/
+.eggs/
