@@ -2,6 +2,8 @@
 
 > 抖音群聊全量抓取工具 — 通过 IM WebSocket 协议导出群聊历史
 
+**这个仓库同时是一个 Hermes skill** —— 详见 [SKILL.md](./SKILL.md)。
+
 ## 这是什么
 
 通过 Chrome 远程调试 + 抖音 IM WebSocket 协议，把指定群聊的**全部历史消息**导出为 JSON 和 Markdown。
@@ -38,6 +40,14 @@ pip install -r requirements.txt
 # 2. 找到目标群聊，点进去加载历史
 # 3. 回到终端：
 
+# 方式 A：一键脚本（推荐）
+./scripts/grab.sh --group "你的群名" --mode full
+
+# 方式 B：直接 python（需要 PYTHONPATH=./src）
+PYTHONPATH=./src python3 -m douyin_im_grabber.grab --group "你的群名" --mode full
+
+# 方式 C：作为包安装到环境
+pip install -e .
 python3 -m douyin_im_grabber.grab --group "你的群名" --mode full
 ```
 
