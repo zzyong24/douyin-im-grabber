@@ -12,8 +12,8 @@ triggers:
 
 # 抖音群聊抓取器 · douyin-im-grabber
 
-> 通过抖音网页版 IM API (`imapi.douyin.com/v1/message/get_by_conversation`) 全量抓取群消息。
-> 协议为 protobuf 二进制，**用纯后端 HTTP 调用 + 浏览器 cookie**，不依赖 UI 自动化。
+> 通过 Chrome CDP 监听抖音网页版聊天页的 Network 响应，抓取真实 IM protobuf 消息。
+> 不手动复制 cookie；由已登录的 Chrome 负责鉴权，skill 只点击目标群、滚动历史、解析响应并导出。
 
 ## 这是什么
 
@@ -44,27 +44,24 @@ triggers:
     --remote-allow-origins=*
   ```
 
-### Step 2: 确认目标群已打开
+### Step 2: 确认目标群在会话列表
 - 用户应在 Chrome 里**打开抖音聊天页面** `https://www.douyin.com/chat?isPopup=1`
 - **目标群需要在 conversationStore 里**（即用户在 Chrome 里能看到这个群）
-- 不需要"切到"那个群（skill 自己会通过 `conversationStore.conversationMap` 找群名→conv_id）
+- 不需要提前切到群；脚本会真实点击左侧群条目，失败才用 `conversationStore` 兜底。
 
 ### Step 3: 跑抓取
 
 ```bash
-# 找 skill 根目录
-SKILL_DIR="$(dirname "$(realpath "$0" 2>/dev/null || python3 -c "import os; print(os.path.dirname(os.path.abspath('')))")")"
-
-python3 "$SKILL_DIR/src/douyin_im_grabber/grab.py" \
-  --group "你的群名" --mode full
+PYTHONPATH=src .venv/bin/python -m douyin_im_grabber.net_grab \
+  --group "你的群名" --max-rounds 160 --idle-rounds 10
 ```
 
 或者用一键脚本：
 ```bash
-./scripts/grab.sh --group "你的群名" --mode full
+./scripts/grab.sh --group "你的群名" --max-rounds 160 --idle-rounds 10
 ```
 
-**预期运行时间**：每 1000 条 ≈ 1 分钟（限速 0.3s/页）。
+**预期运行时间**：每 1000 条约 20-40 秒，取决于网页滚动和响应体大小。
 
 ### Step 4: 验证输出
 
@@ -73,9 +70,10 @@ python3 "$SKILL_DIR/src/douyin_im_grabber/grab.py" \
 - 文件：`<群名>_<时间戳>.md`（蒸馏版，含 Top 20 发言榜 + 消息记录）
 
 **质量检查**：
-- JSON 总消息数应等于 page 累计的总数
-- MD 顶部"基础信息"应正确
-- 文本消息数（type=7）应在 60-80% 之间
+- JSON 中 `total_messages` 应等于 `server_id` 去重后的消息数
+- `created_at_ms` 应为真实 2026 时间，不应停留在 2023 假时间
+- MD 顶部"基础信息"应正确，非文本消息应显示为 `[图片]`、`[表情]`、`[卡片]` 等摘要
+- 如果分段多次抓取，按 `server_id` 合并去重后再交付最终文件
 
 ### Step 5: 报告给用户
 
@@ -91,11 +89,11 @@ python3 "$SKILL_DIR/src/douyin_im_grabber/grab.py" \
 | 参数 | 默认值 | 含义 |
 |---|---|---|
 | `--group` | 无 | 群名（自动匹配） |
-| `--conv-id` | 无 | 直接指定 conv_id（跳过匹配） |
-| `--mode` | `full` | `full`=全量 / `incremental`=增量续跑 |
-| `--max-pages` | `500` | 最大翻页数（防失控） |
-| `--distill-only` | `false` | 只蒸馏不抓 |
-| `--no-distill` | `false` | 不生成 MD（只出 JSON） |
+| `--max-rounds` | `120` | 最大滚动轮数 |
+| `--idle-rounds` | `10` | 连续无新增多少轮后停止 |
+| `--wheel-events` | `24` | 每轮滚轮事件数 |
+| `--delta-y` | `-1200` | 滚轮方向/幅度；补漏可尝试 `1200` |
+| `--no-md` | `false` | 不生成 MD（只出 JSON） |
 
 ## 输出位置
 
@@ -112,8 +110,8 @@ python3 "$SKILL_DIR/src/douyin_im_grabber/grab.py" \
 
 1. **不要连续跑** —— 抖音有限速，每次抓取后建议**至少冷却 1 小时**
 2. **sessionid 会过期** —— 跑前确认 Chrome 还在登录态；如果失败先重新登录
-3. **单次 MAX_PAGES=500** —— 防止意外循环（500 页 = 25000 条，足够大多数群）
-4. **HAR 提取参数** —— 适配 cursor 特殊的群（财富自由团这种）
+3. **单次 max-rounds 控制上限** —— 防止网页虚拟列表异常循环
+4. **分段补抓要合并** —— 如果刷新后补到不同时间段，最终按 `server_id` 去重合并
 
 ## 作为 Hermes skill 安装
 
@@ -135,9 +133,10 @@ git clone https://github.com/zzyong24/douyin-im-grabber.git \
 |---|---|---|
 | `无法连接 Chrome CDP` | Chrome 未启 CDP | 重启 Chrome + `--remote-debugging-port=9222` |
 | `找不到 douyin.com tab` | Chrome 没开抖音页面 | 用户打开 `https://www.douyin.com/chat?isPopup=1` |
-| `找不到群: xxx` | 群不在当前 conversationStore | 用户在 Chrome 里点开一次那个群 |
+| `找不到群: xxx` | 群不在当前会话列表 | 用户在 Chrome 里搜索/点开一次那个群 |
 | `conversation not found` | sessionid 过期 | 重新登录抖音 |
-| `HTTP 429` | 限速 | 等待 1 小时后重跑，或增大 `SLEEP_BETWEEN_PAGES` |
+| `HTTP 429` | 限速 | 等待 1 小时后重跑，减少 `--wheel-events` 或增加冷却 |
+| 只抓到局部时间段 | 页面虚拟列表停在历史窗口 | 刷新 `chat?isPopup=1` 后从最新窗口再跑，并与旧 JSON 按 `server_id` 合并 |
 
 ## License
 
